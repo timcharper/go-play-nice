@@ -1,6 +1,7 @@
 package goparser
 
 import org.scalatest.{FunSpec, Matchers, Inside}
+import ast._
 
 class GoParserSpec extends FunSpec with Matchers with Inside {
 
@@ -21,7 +22,7 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
   import fastparse.all.Parsed
   describe("elements") {
     it("parsers a package line") {
-      doParse(GoParser.pkg, "package thing") shouldBe Package("thing")
+      doParse(GoParser.pkg, "package thing") shouldBe PackageDef("thing")
     }
 
     it("parses a single input line without an alias") {
@@ -51,17 +52,28 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
     it("parses types") {
       val test = doParse(Lexical.tpe, _: String)
 
-      test("*int") shouldBe (PointerType(NamedType("int")))
-      test("int") shouldBe (NamedType("int"))
-      test("[]int") shouldBe (SliceType(None, NamedType("int")))
-      test("[10]int") shouldBe (SliceType(Some(10), NamedType("int")))
-      test("[10]*int") shouldBe (SliceType(Some(10), PointerType(NamedType("int"))))
-      test("map[string]int") shouldBe (MapType(NamedType("string"), NamedType("int")))
+      // ints
+      test("byte") shouldBe (IntegerType(Some(8), false))
+      test("int") shouldBe (IntegerType(None, true))
+      test("uint32") shouldBe (IntegerType(Some(32), false))
+      test("uint64") shouldBe (IntegerType(Some(64), false))
+      test("float32") shouldBe (FloatType(32))
+      test("float64") shouldBe (FloatType(64))
+      test("complex64") shouldBe (ComplexType(64))
+      test("complex128") shouldBe (ComplexType(128))
+      test("boolean") shouldBe (BooleanType)
+      // pointers
+      test("*int") shouldBe (PointerType(IntegerType(None, true)))
+      // slices
+      test("[]int") shouldBe (SliceType(None, IntegerType(None, true)))
+      test("[10]int") shouldBe (SliceType(Some(10), IntegerType(None, true)))
+      test("[10]*int") shouldBe (SliceType(Some(10), PointerType(IntegerType(None, true))))
+      test("map[string]int") shouldBe (MapType(StringType, IntegerType(None, true)))
     }
 
     it("parses a struct field") {
       doParse(Lexical.structField, "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
-        StructField("Key", SliceType(None, NamedType("byte")), Some("""protobuf:"bytes,1,opt,name=key"""")))
+        StructField("Key", SliceType(None, ByteType), Some("""protobuf:"bytes,1,opt,name=key"""")))
 
       doParse(Lexical.structFieldInclude, "IncludeThis\n") shouldBe (
         StructFieldInclude(tpe("IncludeThis"), None))

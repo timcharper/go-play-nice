@@ -1,6 +1,7 @@
 package goparser
 
 import fastparse.noApi._
+import ast._
 // import Expressions._
 
 object Basic {
@@ -64,18 +65,22 @@ object Lexical {
   }
 
   def mapTpe: Parser[MapType] = P {
-    ("map[" ~/ maybePointer(sliceTpe | valueTpe) ~ "]" ~ tpe)
+    ("map[" ~/ maybePointer(sliceTpe | primitiveTpe | referencedTpe) ~ "]" ~ tpe)
   } map {
     case (keyType, valueType) =>
       MapType(keyType, valueType)
   }
 
-  def valueTpe: Parser[NamedType] = P {
-    identifier.map(NamedType)
+  def stringTpe: Parser[StringType.type] = P {
+    "string".!.map { _ => StringType }
+  }
+
+  def referencedTpe: Parser[ReferencedType] = P {
+    ((identifier ~ ".").!.? ~ identifier).map(ReferencedType.tupled)
   }
 
   def tpe: Parser[GoType] = P {
-    maybePointer(sliceTpe | mapTpe | valueTpe)
+    maybePointer(sliceTpe | mapTpe | primitiveTpe | referencedTpe)
   }
 
   def spaceDelim = (inlineComment | " " | "\t").rep(1)
@@ -87,8 +92,41 @@ object Lexical {
     tpe ~ (spaceDelim ~ shortstring).? ~ spaceDelim.? ~ &("\n" | "}")
   }.map(StructFieldInclude.tupled)
 
+  def complexTpe: Parser[ComplexType] = P {
+    ("complex" ~ ("64" | "128").!).map { bits =>
+      ComplexType(bits.toInt)
+    }
+  }
+  def floatTpe: Parser[FloatType] = P {
+    ("float" ~ ("32" | "64").!).map { bits =>
+      FloatType(bits.toInt)
+    }
+  }
+
+  def byteTpe: Parser[IntegerType] = P {
+    "byte".!.map { _ =>
+      IntegerType(Some(8), false)
+    }
+  }
+
+  def integerTpe: Parser[IntegerType] = byteTpe | P {
+    ("u".!.? ~ "int" ~ ("8" | "16" | "32" | "64").!.?) map {
+      case (unsigned, bits) =>
+        IntegerType(bits.map(_.toInt), unsigned.isEmpty)
+    }
+  }
+
+  def boolTpe: Parser[BooleanType.type] = P {
+    "boolean".!.map { _ =>
+      BooleanType
+    }
+  }
+
   def structItem: Parser[StructItem] =
     structField | structFieldInclude
+
+  def primitiveTpe =
+    integerTpe | floatTpe | complexTpe | boolTpe | stringTpe
 
 }
 
@@ -99,8 +137,8 @@ object GoParser {
   import Lexical.kw
   import WsApi._
   import Lexical._
-  def pkg: Parser[Package] =
-    P("package" ~ identifier).map(Package)
+  def pkg: Parser[PackageDef] =
+    P("package" ~ identifier).map(PackageDef)
 
   def imports: Parser[Seq[Import]] =
     importSingle | importMultiple

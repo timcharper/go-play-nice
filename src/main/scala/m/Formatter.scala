@@ -1,30 +1,42 @@
 package m
 
 import goparser._
+import ast._
 
 object StructFormatter {
-  def formatTpe(name: String, t: GoType, pointers: String = ""): Seq[String] = {
+  private def signedKw(signed: Boolean) = 
+    (if (signed) "signed" else "unsigned")
+  def formatTpe(t: GoType): String = t match {
+    case IntegerType(Some(8), signed) =>
+      s"${signedKw(signed)} char"
+    case IntegerType(Some(16), signed) =>
+      s"${signedKw(signed)} short"
+    case IntegerType(Some(32), signed) =>
+      s"${signedKw(signed)} long"
+    case IntegerType(Some(64), signed) =>
+      s"${signedKw(signed)} long long"
+    case _ =>
+      s"NotImplemented(${t.toString})"
+  }
+
+  def formatField(name: String, t: GoType, pointers: String = ""): Seq[String] = {
     t match {
-      case SliceType(_, NamedType("byte")) =>
+      // byte array
+      case SliceType(_, IntegerType(Some(8), false)) =>
         List(
           s"void ${pointers}*${name}",
           s"long ${pointers}${name}Len")
-      case NamedType("string") =>
-        List(s"char *${pointers}${name}")
-      case NamedType(nme) =>
-        List(s"${nme} ${pointers}${name}")
       case PointerType(tpe) =>
-        formatTpe(name, tpe, pointers + "*")
+        formatField(name, tpe, pointers + "*")
       case _ =>
-        List(s"/* not implemented: ${name} ${pointers}${t} */")
+        List(s"${formatTpe(t)} ${pointers}${name}")
     }
-
   }
 
   def formatField(s: StructItem): Seq[String] = {
     s match {
       case StructField(key, tpe, _) =>
-        formatTpe(key, tpe)
+        formatField(key, tpe)
       case _ =>
         List("/* not supported */")
     }
