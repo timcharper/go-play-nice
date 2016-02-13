@@ -14,6 +14,8 @@ case class StructDef(name: String, fields: List[StructItem]) extends Node
 
 sealed trait GoType extends Node
 case class ReferencedType(pkg: Option[String], name: String) extends GoType
+// TODO
+case class InterfaceType(members: Seq[Nothing] = List.empty) extends GoType
 
 sealed trait GoPrimitive extends GoType
 case class IntegerType(bits: Option[Int], signed: Boolean) extends GoPrimitive
@@ -35,4 +37,4 @@ case class NamedFunctionDef(
 
 case class FunctionArg(
   name: String,
-  tpe: Option[GoType])
+  tpe: GoType)

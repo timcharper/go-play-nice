@@ -97,9 +97,9 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
             StructFieldInclude(tpe("IncludeThis"), None))))
     }
 
-    it("parses a function without return values") {
-      doParse(GoParser.namedFunctionDef, """
-        func Merge(dst, src Message) {
+    it("consumes a block of code") {
+      doParse(GoParser.block, """
+        {
           in := reflect.ValueOf(src)
           out := reflect.ValueOf(dst)
           if out.IsNil() {
@@ -115,13 +115,19 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
           }
           mergeStruct(out.Elem(), in.Elem())
         }
+      """.trim) shouldBe (())
+    }
+
+    it("parses a function with a body and without return values") {
+      doParse(GoParser.namedFunctionDef, """
+        func Merge(dst, src Message) {}
       """.trim) shouldBe (
         NamedFunctionDef(
           None,
           "Merge",
           List(
-            FunctionArg("dst", None),
-            FunctionArg("src", Some(ReferencedType(None, "Message")))),
+            FunctionArg("dst", ReferencedType(None, "Message")),
+            FunctionArg("src", ReferencedType(None, "Message"))),
           List.empty)
       )
     }

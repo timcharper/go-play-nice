@@ -2,6 +2,7 @@ package goparser
 
 import fastparse.noApi._
 import ast._
+import scala.annotation.tailrec
 // import Expressions._
 
 object Basic {
@@ -174,9 +175,9 @@ object GoParser {
         t
     }
 
-    val functionArg: Parser[FunctionArg] = (
+    val functionArgTup: Parser[(String, Option[GoType])] = (
       identifier ~ tpe.?
-    ).map(FunctionArg.tupled)
+    )
 
     val returnArg: Parser[GoType] = (
       identifier.? ~ tpe
@@ -188,8 +189,32 @@ object GoParser {
     val returnArgs: Parser[Seq[GoType]] = (returnArg.rep(min=0, max=1) |
       inParens(returnArg.rep(min = 0, sep = P{","})))
 
+    @tailrec
+    def resolveArgTypes(
+      reverseArgs: List[(String, Option[GoType])],
+      acc: List[FunctionArg] = List.empty,
+      lastArgType: GoType = InterfaceType()): List[FunctionArg] = {
+      reverseArgs match {
+        case Nil =>
+          acc
+        case (name, argTpe) :: rest =>
+          val t = argTpe.getOrElse(lastArgType)
+          resolveArgTypes(
+            rest,
+            FunctionArg(name, t) :: acc,
+            t)
+      }
+    }
+
+    val functionArgs: Parser[Seq[FunctionArg]] = {
+      inParens(functionArgTup.rep(min = 0, sep = P{","})).map { l =>
+        resolveArgTypes(l.reverse.toList)
+      }
+    }
+
+
     val functionDefHeader = ("func" ~ contextArg.? ~ identifier ~
-      inParens(functionArg.rep(min = 0, sep = P{","})) ~
+      functionArgs ~
       returnArgs).map(NamedFunctionDef.tupled)
 
     functionDefHeader ~ block
