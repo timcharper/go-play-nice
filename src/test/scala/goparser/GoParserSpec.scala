@@ -17,7 +17,7 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
         throw new ParseError(f)
     }
   }
-  val tpe = doParse(Lexical.tpe, _: String)
+  val tpe = doParse(GoParser.tpe, _: String)
 
   import fastparse.all.Parsed
   describe("elements") {
@@ -36,7 +36,7 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
     }
 
     it("parses a multi-line import statement") {
-      doParse(GoParser.imports, """
+      doParse(GoParser.importMultiple, """
         import (
           some "thing"
           other "thing"
@@ -50,34 +50,59 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
     }
 
     it("parses types") {
-      val test = doParse(Lexical.tpe, _: String)
-
       // ints
-      test("byte") shouldBe (IntegerType(Some(8), false))
-      test("int") shouldBe (IntegerType(None, true))
-      test("uint32") shouldBe (IntegerType(Some(32), false))
-      test("uint64") shouldBe (IntegerType(Some(64), false))
-      test("float32") shouldBe (FloatType(32))
-      test("float64") shouldBe (FloatType(64))
-      test("complex64") shouldBe (ComplexType(64))
-      test("complex128") shouldBe (ComplexType(128))
-      test("boolean") shouldBe (BooleanType)
+      tpe("byte") shouldBe (IntegerType(Some(8), false))
+      tpe("int") shouldBe (IntegerType(None, true))
+      tpe("uint32") shouldBe (IntegerType(Some(32), false))
+      tpe("uint64") shouldBe (IntegerType(Some(64), false))
+      tpe("float32") shouldBe (FloatType(32))
+      tpe("float64") shouldBe (FloatType(64))
+      tpe("complex64") shouldBe (ComplexType(64))
+      tpe("complex128") shouldBe (ComplexType(128))
+      tpe("boolean") shouldBe (BooleanType)
       // pointers
-      test("*int") shouldBe (PointerType(IntegerType(None, true)))
+      tpe("*int") shouldBe (PointerType(IntegerType(None, true)))
       // slices
-      test("[]int") shouldBe (SliceType(None, IntegerType(None, true)))
-      test("[10]int") shouldBe (SliceType(Some(10), IntegerType(None, true)))
-      test("[10]*int") shouldBe (SliceType(Some(10), PointerType(IntegerType(None, true))))
-      test("map[string]int") shouldBe (MapType(StringType, IntegerType(None, true)))
-      test("Message") shouldBe (ReferencedType(None, "Message"))
-      test("protobuf.Message") shouldBe (ReferencedType(Some("protobuf"), "Message"))
+      tpe("[]int") shouldBe (SliceType(None, IntegerType(None, true)))
+      tpe("[10]int") shouldBe (SliceType(Some(10), IntegerType(None, true)))
+      tpe("[10]*int") shouldBe (SliceType(Some(10), PointerType(IntegerType(None, true))))
+      tpe("map[string]int") shouldBe (MapType(StringType, IntegerType(None, true)))
+      tpe("Message") shouldBe (ReferencedType(None, "Message"))
+      tpe("protobuf.Message") shouldBe (ReferencedType(Some("protobuf"), "Message"))
+      tpe("func()") shouldBe (FuncType(List.empty, List.empty))
+      tpe("func(int)") shouldBe (
+        FuncType(
+          List(
+            FuncArg("arg0", tpe("int"))),
+          List.empty))
+
+      tpe("func(int) bool") shouldBe (
+        FuncType(
+          List(
+            FuncArg("arg0", tpe("int"))),
+          List(
+            tpe("bool"))))
+
+      tpe("func(src, dst []byte)") shouldBe (
+        FuncType(
+          List(
+            FuncArg("src", tpe("[]byte")),
+            FuncArg("dst", tpe("[]byte"))),
+          List.empty))
+    }
+
+    it("namedArgs") {
+      doParse(GoParser.namedArgs, "(src, dst []byte)") shouldBe (
+        List(
+            FuncArg("src", tpe("[]byte")),
+            FuncArg("dst", tpe("[]byte"))))
     }
 
     it("parses a struct field") {
-      doParse(Lexical.structField, "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
+      doParse(GoParser.structField, "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
         StructField("Key", SliceType(None, ByteType), Some("""protobuf:"bytes,1,opt,name=key"""")))
 
-      doParse(Lexical.structFieldInclude, "IncludeThis\n") shouldBe (
+      doParse(GoParser.structFieldInclude, "IncludeThis\n") shouldBe (
         StructFieldInclude(tpe("IncludeThis"), None))
     }
 
@@ -118,18 +143,73 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
       """.trim) shouldBe (())
     }
 
-    it("parses a function with a body and without return values") {
-      doParse(GoParser.namedFunctionDef, """
+    it("parses a func with a body and without return values") {
+      doParse(GoParser.namedFuncDef, """
         func Merge(dst, src Message) {}
       """.trim) shouldBe (
-        NamedFunctionDef(
+        NamedFuncDef(
           None,
           "Merge",
           List(
-            FunctionArg("dst", ReferencedType(None, "Message")),
-            FunctionArg("src", ReferencedType(None, "Message"))),
+            FuncArg("dst", ReferencedType(None, "Message")),
+            FuncArg("src", ReferencedType(None, "Message"))),
           List.empty)
       )
+    }
+
+    describe("parsing interfaces") {
+      it("parses an member item") {
+
+        doParse(GoParser.interfaceItem, """
+          BlockSize() int
+        """.trim) shouldBe (
+          Left(("BlockSize", FuncType(List.empty, List(tpe("int")))))
+        )
+
+        doParse(GoParser.interfaceMember, """
+          Encrypt(src, dst []byte)
+        """.trim) shouldBe (
+          Left(
+            ("Encrypt",
+              FuncType(
+                List(
+                  FuncArg("src", tpe("[]byte")),
+                  FuncArg("dst", tpe("[]byte"))),
+                List.empty))))
+      }
+
+      it("parses an empty definition") {
+        doParse(GoParser.interfaceDef, """
+          type Block interface {}
+        """.trim) shouldBe (
+          InterfaceDef("Block",
+            members = Map.empty,
+            includes = List.empty))
+      }
+
+      it("parses an interface with includes") {
+        doParse(GoParser.interfaceDef, """
+          type Block interface {
+            BlockSize() int
+            Encrypt(src, dst []byte)
+            Decrypt(src, dst []byte)
+          }
+        """.trim) shouldBe (
+          InterfaceDef("Block",
+            members = Map(
+              "BlockSize" -> FuncType(List.empty, List(tpe("int"))),
+              "Encrypt" -> FuncType(
+                List(
+                  FuncArg("src", tpe("[]byte")),
+                  FuncArg("dst", tpe("[]byte"))),
+                List.empty),
+              "Decrypt" -> FuncType(
+                List(
+                  FuncArg("src", tpe("[]byte")),
+                  FuncArg("dst", tpe("[]byte"))),
+                List.empty)),
+            includes = List.empty))
+      }
     }
   }
 }

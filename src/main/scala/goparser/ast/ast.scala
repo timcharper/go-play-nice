@@ -12,6 +12,10 @@ case class StructField(name: String, tpe: GoType, tag: Option[String]) extends S
 case class StructFieldInclude(tpe: GoType, tag: Option[String]) extends StructItem
 case class StructDef(name: String, fields: List[StructItem]) extends Node
 
+case class InterfaceDef(name: String,
+  members: Map[String, FuncType],
+  includes: List[ReferencedType]) extends Node
+
 sealed trait GoType extends Node
 case class ReferencedType(pkg: Option[String], name: String) extends GoType
 // TODO
@@ -23,18 +27,19 @@ case class FloatType(bits: Int) extends GoPrimitive
 case class ComplexType(bits: Int) extends GoPrimitive
 case object StringType extends GoPrimitive
 case object BooleanType extends GoPrimitive
+case class FuncType(args: Seq[FuncArg], results: Seq[GoType]) extends GoPrimitive
 
 case class UnsupportedType(n: String) extends GoType
 case class SliceType(size: Option[Int], values: GoType) extends GoType
 case class MapType(keyType: GoType, valueType: GoType) extends GoType
 case class PointerType(tpe: GoType) extends GoType
 
-case class NamedFunctionDef(
+case class NamedFuncDef(
   contextType: Option[GoType],
   name: String,
-  params: Seq[FunctionArg],
+  params: Seq[FuncArg],
   returnParams: Seq[GoType]) extends Node
 
-case class FunctionArg(
+case class FuncArg(
   name: String,
   tpe: GoType)
