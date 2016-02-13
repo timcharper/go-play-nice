@@ -56,25 +56,10 @@ object Lexical {
 
 object WsApi extends fastparse.WhitespaceApi.Wrapper(Lexical.wscomment)
 
-object GoParser {
+object GoTypes {
   import Lexical.kw
   import WsApi._
   import Lexical._
-  def pkg: Parser[PackageDef] =
-    P("package" ~ identifier).map(PackageDef)
-
-  def imports: Parser[Seq[Import]] =
-    importSingle | importMultiple
-
-  def importPair: Parser[Import] = P { identifier.? ~ shortstring }.map {
-    case (alias, singleImport) =>
-      Import(alias, singleImport)
-  }
-
-  def importMultiple: Parser[Seq[Import]] = {
-    "import" ~ "(" ~ lineDelimiter.rep ~ (importPair ~ lineDelimiter.rep(1)).rep(1) ~
-    ")"
-  }
 
   def maybePointer(p: Parser[GoType]): Parser[GoType] = P {
     ("*" ~ p).map(PointerType) | p
@@ -109,11 +94,10 @@ object GoParser {
     ((identifier ~ ".").? ~ identifier).map(ReferencedType.tupled)
   }
 
+
   def tpe: Parser[GoType] = P {
     maybePointer(sliceTpe | mapTpe | primitiveTpe | referencedTpe)
   }
-
-  def spaceDelim = (inlineComment | " " | "\t").rep(1)
 
   def complexTpe: Parser[ComplexType] = P {
     ("complex" ~ ("64" | "128").!).map { bits =>
@@ -159,10 +143,6 @@ object GoParser {
 
   def primitiveTpe =
     integerTpe | floatTpe | complexTpe | boolTpe | stringTpe | funcTpe
-
-
-  def importSingle: Parser[Seq[Import]] =
-    ("import" ~ importPair).map(List(_))
 
   def structFieldInclude: Parser[StructFieldInclude] = P {
     tpe ~ shortstring.? ~ &("\n" | "}")
@@ -222,8 +202,55 @@ object GoParser {
       namedArgs.map(_.map(_.tpe)) |
       unnamedArgs
 
+  // Go, for reasons, allows you to declare a func with parameters that have no name
+  val positionallyNamedArgs =
+    unnamedArgs.map(_.zipWithIndex.map {
+      case (t, i) => FuncArg(s"arg${i.toString}", t)})
+
+  def funcTypeArgs: Parser[Seq[FuncArg]] = P {
+    namedArgs | positionallyNamedArgs
+  }
+
+  def funcTpe: Parser[FuncType] = P {
+    ("func" ~ funcTypeArgs ~ funcResultArgs) map {
+      case (args, resultArgs) =>
+        FuncType(args, resultArgs)
+    }
+  }
+
+}
+
+
+object GoParser {
+  import Lexical.kw
+  import WsApi._
+  import Lexical._
+  import GoTypes.tpe
+  def pkg: Parser[PackageDef] =
+    P("package" ~ identifier).map(PackageDef)
+
+  def imports: Parser[Seq[Import]] =
+    importSingle | importMultiple
+
+  def importPair: Parser[Import] = P { identifier.? ~ shortstring }.map {
+    case (alias, singleImport) =>
+      Import(alias, singleImport)
+  }
+
+  def importMultiple: Parser[Seq[Import]] = {
+    "import" ~ "(" ~ lineDelimiter.rep ~ (importPair ~ lineDelimiter.rep(1)).rep(1) ~
+    ")"
+  }
+
+  def spaceDelim = (inlineComment | " " | "\t").rep(1)
+
+
+  def importSingle: Parser[Seq[Import]] =
+    ("import" ~ importPair).map(List(_))
+
+
   def namedFuncDef: Parser[NamedFuncDef] = P {
-    val contextArg: Parser[GoType] = inParens(
+    val contextArg: Parser[GoType] = GoTypes.inParens(
       identifier ~ tpe
     ).map {
       case (_, t) =>
@@ -238,8 +265,8 @@ object GoParser {
     }
 
     val funcDefHeader = ("func" ~ contextArg.? ~ identifier ~/
-      (namedArgs | positionallyNamedArgs) ~
-      funcResultArgs).map(NamedFuncDef.tupled)
+      (GoTypes.namedArgs | GoTypes.positionallyNamedArgs) ~
+      GoTypes.funcResultArgs).map(NamedFuncDef.tupled)
 
     funcDefHeader ~ block
   }
@@ -258,31 +285,15 @@ object GoParser {
     (CharsWhile(c => ! (charThings contains c)) | shortstring | block | comment | parenExpr).map { _ => () }
   }
 
-  // Go, for reasons, allows you to declare a func with parameters that have no name
-  val positionallyNamedArgs =
-    unnamedArgs.map(_.zipWithIndex.map {
-      case (t, i) => FuncArg(s"arg${i.toString}", t)})
-
-  def funcTypeArgs: Parser[Seq[FuncArg]] = P {
-    namedArgs | positionallyNamedArgs
-  }
-
-  def funcTpe: Parser[FuncType] = P {
-    ("func" ~ funcTypeArgs ~ funcResultArgs) map {
-      case (args, resultArgs) =>
-        FuncType(args, resultArgs)
-    }
-  }
-
   def interfaceMember: Parser[Either[(String, FuncType), Nothing]] = {
-    (identifier ~ funcTypeArgs ~ funcResultArgs).map {
+    (identifier ~ GoTypes.funcTypeArgs ~ GoTypes.funcResultArgs).map {
       case (name, args, resultArgs) =>
         Left((name, FuncType(args, resultArgs)))
     }
   }
 
   def interfaceInclude: Parser[Either[Nothing, ReferencedType]] =
-    referencedTpe.map(Right(_))
+    GoTypes.referencedTpe.map(Right(_))
 
   def interfaceItem: Parser[Either[(String, FuncType), ReferencedType]] = P {
     interfaceMember | interfaceInclude

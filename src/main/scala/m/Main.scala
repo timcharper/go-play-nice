@@ -3,14 +3,14 @@ import fastparse.core.Parsed
 import goparser._
 
 object Main extends App {
-  val Parsed.Success(privKey, _) = GoParser.struct.parse("""
+  val Parsed.Success(privKey, _) = GoTypes.struct.parse("""
     type PrivateKey struct {
       Key       []byte    `protobuf:"bytes,1,opt,name=key" json:"key,omitempty"`
       PublicKey PublicKey `protobuf:"bytes,2,opt,name=public_key" json:"public_key"`
     }
   """.trim)
 
-  val Parsed.Success(certFields, _) = GoParser.struct.parse("""
+  val Parsed.Success(certFields, _) = GoTypes.struct.parse("""
     type CertificateFields struct {
       Name      string    `protobuf:"bytes,1,opt,name=name" json:"name"`
       Id        []byte    `protobuf:"bytes,2,opt,name=id" json:"id,omitempty"`

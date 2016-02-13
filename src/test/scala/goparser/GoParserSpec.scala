@@ -17,7 +17,7 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
         throw new ParseError(f)
     }
   }
-  val tpe = doParse(GoParser.tpe, _: String)
+  val tpe = doParse(GoTypes.tpe, _: String)
 
   import fastparse.all.Parsed
   describe("elements") {
@@ -92,22 +92,22 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
     }
 
     it("namedArgs") {
-      doParse(GoParser.namedArgs, "(src, dst []byte)") shouldBe (
+      doParse(GoTypes.namedArgs, "(src, dst []byte)") shouldBe (
         List(
             FuncArg("src", tpe("[]byte")),
             FuncArg("dst", tpe("[]byte"))))
     }
 
     it("parses a struct field") {
-      doParse(GoParser.structField, "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
+      doParse(GoTypes.structField, "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
         StructField("Key", SliceType(None, ByteType), Some("""protobuf:"bytes,1,opt,name=key"""")))
 
-      doParse(GoParser.structFieldInclude, "IncludeThis\n") shouldBe (
+      doParse(GoTypes.structFieldInclude, "IncludeThis\n") shouldBe (
         StructFieldInclude(tpe("IncludeThis"), None))
     }
 
     it("parse a struct") {
-      doParse(GoParser.struct, """
+      doParse(GoTypes.struct, """
         type PrivateKey struct {
           Key       []byte    `protobuf:"bytes,1,opt,name=key" json:"key,omitempty"`
           PublicKey PublicKey `protobuf:"bytes,2,opt,name=public_key" json:"public_key"`
