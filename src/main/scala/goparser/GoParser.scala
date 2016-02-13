@@ -19,6 +19,7 @@ object Lexical {
   val identifier: P[String] =
     P( (letter|"_") ~ (letter | digit | "_").rep ).!.filter(!keywordList.contains(_))
 
+  val keyword = P { StringIn(keywordList.toSeq : _*) }
   val keywordList = Set(
     "break", "default", "func", "interface", "select",
     "case", "defer", "go", "map", "struct",
@@ -76,7 +77,7 @@ object Lexical {
   }
 
   def referencedTpe: Parser[ReferencedType] = P {
-    ((identifier ~ ".").!.? ~ identifier).map(ReferencedType.tupled)
+    ((identifier ~ ".").? ~ identifier).map(ReferencedType.tupled)
   }
 
   def tpe: Parser[GoType] = P {
@@ -163,4 +164,49 @@ object GoParser {
   }.map {
     case (name, fields) => StructDef(name, fields.toList)
   }
+
+  def namedFunctionDef: Parser[NamedFunctionDef] = P {
+    def inParens[T](p: Parser[T]): Parser[T] = "(" ~ p ~ ")"
+    val contextArg: Parser[GoType] = inParens(
+      identifier ~ tpe
+    ).map {
+      case (_, t) =>
+        t
+    }
+
+    val functionArg: Parser[FunctionArg] = (
+      identifier ~ tpe.?
+    ).map(FunctionArg.tupled)
+
+    val returnArg: Parser[GoType] = (
+      identifier.? ~ tpe
+    ).map {
+      case (_, t) =>
+        t
+    }
+
+    val returnArgs: Parser[Seq[GoType]] = (returnArg.rep(min=0, max=1) |
+      inParens(returnArg.rep(min = 0, sep = P{","})))
+
+    val functionDefHeader = ("func" ~ contextArg.? ~ identifier ~
+      inParens(functionArg.rep(min = 0, sep = P{","})) ~
+      returnArgs).map(NamedFunctionDef.tupled)
+
+    functionDefHeader ~ block
+  }
+
+
+  def parenExpr: Parser[Unit] = P {
+    "(" ~ contents.rep ~ ")"
+  }
+
+  def block: Parser[Unit] = P {
+    "{" ~ contents.rep ~ "}"
+  }
+
+  def contents = P {
+    val charThings = Set('/', '(', ')', '{', '}', '"', '`')
+    (CharsWhile(c => ! (charThings contains c)) | shortstring | block | comment | parenExpr).map { _ => () }
+  }
+
 }

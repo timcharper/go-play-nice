@@ -69,6 +69,8 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
       test("[10]int") shouldBe (SliceType(Some(10), IntegerType(None, true)))
       test("[10]*int") shouldBe (SliceType(Some(10), PointerType(IntegerType(None, true))))
       test("map[string]int") shouldBe (MapType(StringType, IntegerType(None, true)))
+      test("Message") shouldBe (ReferencedType(None, "Message"))
+      test("protobuf.Message") shouldBe (ReferencedType(Some("protobuf"), "Message"))
     }
 
     it("parses a struct field") {
@@ -93,6 +95,35 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
             StructField("Key", tpe("[]byte"), Some("""protobuf:"bytes,1,opt,name=key" json:"key,omitempty"""")),
             StructField("PublicKey", tpe("PublicKey"), Some("""protobuf:"bytes,2,opt,name=public_key" json:"public_key"""")),
             StructFieldInclude(tpe("IncludeThis"), None))))
+    }
+
+    it("parses a function without return values") {
+      doParse(GoParser.namedFunctionDef, """
+        func Merge(dst, src Message) {
+          in := reflect.ValueOf(src)
+          out := reflect.ValueOf(dst)
+          if out.IsNil() {
+            panic("proto: nil destination")
+          }
+          if in.Type() != out.Type() {
+            // Explicit test prior to mergeStruct so that mistyped nils will fail
+            panic("proto: type mismatch")
+          }
+          if in.IsNil() {
+            // Merging nil into non-nil is a quiet no-op
+            return
+          }
+          mergeStruct(out.Elem(), in.Elem())
+        }
+      """.trim) shouldBe (
+        NamedFunctionDef(
+          None,
+          "Merge",
+          List(
+            FunctionArg("dst", None),
+            FunctionArg("src", Some(ReferencedType(None, "Message")))),
+          List.empty)
+      )
     }
   }
 }
