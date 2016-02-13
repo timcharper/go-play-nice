@@ -22,7 +22,7 @@ object StructFormatter {
   def formatField(name: String, t: GoType, pointers: String = ""): Seq[String] = {
     t match {
       // byte array
-      case SliceType(_, IntegerType(Some(8), false)) =>
+      case ArrayType(IntegerType(Some(8), false)) | SliceType(IntegerType(Some(8), false)) =>
         List(
           s"void ${pointers}*${name}",
           s"long ${pointers}${name}Len")

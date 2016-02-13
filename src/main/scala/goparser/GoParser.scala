@@ -9,146 +9,62 @@ object Basic {
   val Newline = P( StringIn("\r\n", "\n") )
 }
 
-object Lexical {
-  import fastparse.all._
-  def kw(s: String) = s ~ !(letter | digit | "_")
-  val space = CharIn(Seq(' ', '\t'))
-  val letter     = P( lowercase | uppercase )
-  val lowercase  = P( CharIn('a' to 'z') )
-  val uppercase  = P( CharIn('A' to 'Z') )
-  val digit      = P( CharIn('0' to '9') )
-
-  val identifier: P[String] =
-    P( (letter|"_") ~ (letter | digit | "_").rep ).!.filter(!keywordList.contains(_))
-
-  val keyword = P { StringIn(keywordList.toSeq : _*) }
-  val keywordList = Set(
-    "break", "default", "func", "interface", "select",
-    "case", "defer", "go", "map", "struct",
-    "chan", "else", "goto", "package", "switch",
-    "const", "fallthrough", "if", "range", "type",
-    "continue", "for", "import", "return", "var")
-
-  // Comments cannot have cuts in them, because they appear before every
-  // terminal node. That means that a comment before any terminal will
-  // prevent any backtracking from working, which is not what we want!
-  val commentChunk = P( CharsWhile(!"/*".contains(_)) | multilineComment | !"*/" ~ AnyChar )
-  val multilineComment: P0 = P( "/*" ~ commentChunk.rep ~ "*/" )
-
-  val inlineCommentChunk = P( CharsWhile(!"/*".contains(_)) | !"*/" ~ AnyChar )
-  val inlineComment: P0 = P( "/*" ~ inlineCommentChunk.rep ~ "*/")
-  val sameLineCharChunks = P( CharsWhile(!"\n\r".contains(_))  | !Basic.Newline ~ AnyChar )
-  val lineComment = P( "//" ~ sameLineCharChunks.rep ~ &(Basic.Newline | End) )
-  val comment: P0 = P( multilineComment | lineComment )
-
-  val wscomment: Parser[Unit] = P { (space | lineComment | inlineComment).rep }
-  val lineDelimiter : Parser[Unit] = P { (Basic.Newline | multilineComment).rep(1) }
-
-
-  val escapeseq: P0 = P( "\\" ~ AnyChar )
-  def shortstring = shortstring0("\"") | shortstring0("`")
-  def shortstring0(delimiter: String) = P( delimiter ~ shortstringitem(delimiter).rep.! ~ delimiter)
-  def shortstringitem(quote: String): P0 = P( shortstringchar(quote) | escapeseq )
-  def shortstringchar(quote: String): P0 = P( CharsWhile(!s"\\\n${quote(0)}".contains(_)) )
-
-}
-
 
 object WsApi extends fastparse.WhitespaceApi.Wrapper(Lexical.wscomment)
 
-object GoTypes {
-  import Lexical.kw
+// object GoProgram {
+//   import Lexical.kw
+//   import WsApi._
+//   import Lexical._
+//   import GoTypes.tpe
+// }
+
+object GoParser {
   import WsApi._
   import Lexical._
+  import GoTypes._
 
-  def maybePointer(p: Parser[GoType]): Parser[GoType] = P {
-    ("*" ~ p).map(PointerType) | p
+  def pkg: Parser[PackageDef] =
+    P("package" ~ identifier).map(PackageDef)
+
+  val Operand: Parser[Unit] = P {
+    Literal | OperandName | MethodExpr | "(" ~ lineDelimiter.rep ~ Expression ~ ")"
   }
 
-  def sliceTpe: Parser[SliceType] = P {
-    (("[" ~ digit.rep(0).! ~ "]").rep(1) ~ tpe)
-  } map {
-    case (sizeChars, values) =>
-      val sizeStr = sizeChars.mkString
-      val size = if (sizeStr.length == 0)
-        None
-      else {
-        Some(sizeStr.mkString("").toInt)
-      }
+  val MethodExpr: Parser[Unit] = P {
+    (ReceiverType ~ "." ~ lineDelimiter.rep ~ MethodName)
+  }.map(_ => ())
 
-      SliceType(size, values)
+  val ReceiverType = identifier
+  val MethodName = identifier
+
+  val Literal: Parser[Unit] = P {
+    BasicLit.map(_ => ()) | CompositeLit | FunctionLit
   }
 
-  def mapTpe: Parser[MapType] = P {
-    ("map[" ~ maybePointer(sliceTpe | primitiveTpe | referencedTpe) ~ "]" ~ tpe)
-  } map {
-    case (keyType, valueType) =>
-      MapType(keyType, valueType)
+  val CompositeLit: Parser[Unit] = P { LiteralType ~ LiteralValue }
+  val LiteralType: Parser[Unit] = P {
+    structTpe | arrayTpe | ("[" ~ lineDelimiter.rep ~ "..." ~ "]" ~ tpe) |
+    sliceTpe | mapTpe | referencedTpe
+  }.map { _ => () }
+
+  val structTpe: Parser[Unit] = P {
+    "struct" ~ "{" ~ lineDelimiter.rep ~ (structItem ~ lineDelimiter.rep).rep ~ "}"
+  }.map(_ => ())
+
+  val LiteralValue: Parser[Unit] = P {
+    "{" ~ lineDelimiter.rep ~ ElementList ~ ",".? ~ "}"
   }
 
-  def stringTpe: Parser[StringType.type] = P {
-    "string".!.map { _ => StringType }
+  val ElementList: Parser[Unit] = P {
+    Element.rep(sep = ",")
   }
 
-  def referencedTpe: Parser[ReferencedType] = P {
-    ((identifier ~ ".").? ~ identifier).map(ReferencedType.tupled)
-  }
+  val FunctionLit: Parser[Unit] = P {
+    funcTpe ~ block
+  }.map(_ => ())
 
-
-  def tpe: Parser[GoType] = P {
-    maybePointer(sliceTpe | mapTpe | primitiveTpe | referencedTpe)
-  }
-
-  def complexTpe: Parser[ComplexType] = P {
-    ("complex" ~ ("64" | "128").!).map { bits =>
-      ComplexType(bits.toInt)
-    }
-  }
-  def floatTpe: Parser[FloatType] = P {
-    ("float" ~ ("32" | "64").!).map { bits =>
-      FloatType(bits.toInt)
-    }
-  }
-
-  def byteTpe: Parser[IntegerType] = P {
-    "byte".!.map { _ =>
-      IntegerType(Some(8), false)
-    }
-  }
-
-  def integerTpe: Parser[IntegerType] = byteTpe | P {
-    ("u".!.? ~ "int" ~ ("8" | "16" | "32" | "64").!.?) map {
-      case (unsigned, bits) =>
-        IntegerType(bits.map(_.toInt), unsigned.isEmpty)
-    }
-  }
-
-  def boolTpe: Parser[BooleanType.type] = P {
-    "boolean".!.map { _ =>
-      BooleanType
-    }
-  }
-
-  // TODO - move these below
-  def structField: Parser[StructField] = P {
-    identifier ~ tpe ~ shortstring.? ~ &(lineDelimiter | "}")
-  }.map(StructField.tupled)
-
-  // def structFieldInclude: Parser[StructFieldInclude] = P {
-  //   tpe ~ (spaceDelim ~ shortstring).? ~ spaceDelim.? ~ &(lineDelimiter | "}")
-  // }.map(StructFieldInclude.tupled)
-
-  def structItem: Parser[StructItem] =
-    structField | structFieldInclude
-
-  def primitiveTpe =
-    integerTpe | floatTpe | complexTpe | boolTpe | stringTpe | funcTpe
-
-  def structFieldInclude: Parser[StructFieldInclude] = P {
-    tpe ~ shortstring.? ~ &("\n" | "}")
-  }.map(StructFieldInclude.tupled)
-
-  def struct: Parser[StructDef] = P {
+  def structDef: Parser[StructDef] = P {
     "type" ~ identifier ~ "struct" ~/ "{" ~ lineDelimiter.rep ~
       (structItem ~ lineDelimiter.rep).rep ~
     "}"
@@ -156,83 +72,86 @@ object GoTypes {
     case (name, fields) => StructDef(name, fields.toList)
   }
 
-  /* first item is a name, type is optional except for in last position; consume
-   * parens. ie (a, b int) */
-  val namedArgs: Parser[Seq[FuncArg]] = P {
-    @tailrec
-    def resolveArgTypes(
-      reverseArgs: List[(String, Option[GoType])],
-      acc: List[FuncArg],
-      lastArgType: GoType): List[FuncArg] = {
-      reverseArgs match {
-        case Nil =>
-          acc
-        case (name, argTpe) :: rest =>
-          val t = argTpe.getOrElse(lastArgType)
-          resolveArgTypes(
-            rest,
-            FuncArg(name, t) :: acc,
-            t)
-      }
-    }
+  val Element: Parser[Unit] = P { ( Key ~ ":" ).? ~ Value }
+  val Key: Parser[Unit] = P {  FieldName | Expression | LiteralValue }
+  val FieldName: Parser[Unit] = P {  identifier }.map(_ => ())
+  val Value: Parser[Unit] = P {  Expression | LiteralValue }
 
-    inParens {
-      ((identifier ~ tpe.? ~ "," ~ lineDelimiter.rep).rep(min = 0) ~
-        (identifier ~ tpe)).map {
-        case (maybeMissing, (lastName, lastTpe)) =>
-          resolveArgTypes(
-            reverseArgs = (lastName, Some(lastTpe)) :: maybeMissing.reverse.toList,
-            acc = List.empty,
-            lastArgType = lastTpe)
-      }
-    }
+  val BasicLit: Parser[String] = P {
+    int_lit | float_lit | imaginary_lit | rune_lit | string_lit
   }
 
-  /* series of types. no names. consume parens. ie (int64, error) */
-  val unnamedArgs = P {
-    inParens {
-      tpe.rep(sep = ("," ~ lineDelimiter.rep))
-    }
+  val OperandName: Parser[Unit] = P {
+    (identifier | QualifiedIdent).map(_ => ())
   }
 
-  def inParens[T](p: Parser[T]): Parser[T] = "(" ~ lineDelimiter.rep ~ p ~ ")"
+  val PackageName = P { identifier }
+  val QualifiedIdent = PackageName ~ "." ~ identifier
 
-  val funcResultArgs: Parser[Seq[GoType]] =
-    tpe.rep(min = 0, max = 1) |
-      namedArgs.map(_.map(_.tpe)) |
-      unnamedArgs
-
-  // Go, for reasons, allows you to declare a func with parameters that have no name
-  val positionallyNamedArgs =
-    unnamedArgs.map(_.zipWithIndex.map {
-      case (t, i) => FuncArg(s"arg${i.toString}", t)})
-
-  def funcTypeArgs: Parser[Seq[FuncArg]] = P {
-    namedArgs | positionallyNamedArgs
+  def Expression: Parser[Unit] = P {
+    UnaryExpr ~ (binary_op ~ Expression).rep
   }
 
-  def funcTpe: Parser[FuncType] = P {
-    ("func" ~ funcTypeArgs ~ funcResultArgs) map {
-      case (args, resultArgs) =>
-        FuncType(args, resultArgs)
-    }
+  val UnaryExpr: Parser[Unit]  = P {
+    PrimaryExpr | (unary_op ~ UnaryExpr)
   }
 
-}
+  val Conversion: Parser[Unit] = P {
+    tpe ~ "(" ~ Expression ~ ",".? ~ ")"
+  }.map ( _ => () )
 
+  val PrimaryExpr: Parser[Unit] = P {
+	  ( Operand |
+	    Conversion) ~
+	  (Selector | Index | Slice | TypeAssertion | Arguments).rep
+  }
 
-object GoParser {
-  import Lexical.kw
-  import WsApi._
-  import Lexical._
-  import GoTypes.tpe
-  def pkg: Parser[PackageDef] =
-    P("package" ~ identifier).map(PackageDef)
+  val Selector: Parser[Unit] = P { ("." ~ identifier).map { _ => () } }
+  val Index: Parser[Unit] = P { "[" ~ lineDelimiter.rep ~ Expression ~ "]" }
+  val Slice: Parser[Unit] = P {
+    "[" ~ (
+      ( Expression.? ~ ":" ~ Expression.? ) |
+      ( Expression.? ~ ":" ~ Expression ~ ":" ~ Expression )) ~
+    "]"
+  }
+
+  val TypeAssertion: Parser[Unit] = P { "." ~ "(" ~ tpe ~ ")" }.map{ _ => () }
+  val Arguments: Parser[Unit] = P {
+    "(" ~ ( (ExpressionList | (tpe ~ ( "," ~ ExpressionList ).?) ) ~ "...".? ~ ",".?).? ~ ")"
+  }.map { _ => () }
+
+  val statementDelim = lineDelimiter.rep(1) | ";"
+  val ConstDecl: Parser[Unit] = P {
+    "const" ~ ( ConstSpec | (
+      "(" ~ lineDelimiter.rep(1) ~ (ConstSpec.rep(sep = statementDelim)) ~ ")"
+    ))
+  }.map { _ => () }
+
+  val ConstSpec      = P { IdentifierList ~ tpe.? ~ "=" ~ ExpressionList }
+
+  val IdentifierList: Parser[Unit] = identifier.rep(sep = ",").map { _ => () }
+  val ExpressionList: Parser[Unit] = Expression.rep(sep = ",")
+
+  val suchThing = {
+    (identifier ~ tpe.? ~ "=" ~ lineDelimiter.rep ~ Expression).map(VarBinding.tupled)
+  }
+
+  val varBinding = P {
+    (identifier ~ tpe.? ~ "=" ~/ lineDelimiter.rep ~ Expression).map(VarBinding.tupled)
+  }
+
+  def goVars: Parser[Seq[VarBinding]] = P {
+    // "var" ~ inParens(varBinding.rep(min=1).map(_.toList))
+    "var" ~/ lineDelimiter.rep ~ (
+      inParens(varBinding.rep(sep = lineDelimiter)) |
+        varBinding.map(Seq(_))
+    )
+  }
 
   def imports: Parser[Seq[Import]] =
     importSingle | importMultiple
 
-  def importPair: Parser[Import] = P { identifier.? ~ shortstring }.map {
+  def importPair: Parser[Import] = P { identifier.? ~ string_lit }.map {
     case (alias, singleImport) =>
       Import(alias, singleImport)
   }
@@ -250,7 +169,7 @@ object GoParser {
 
 
   def namedFuncDef: Parser[NamedFuncDef] = P {
-    val contextArg: Parser[GoType] = GoTypes.inParens(
+    val contextArg: Parser[GoType] = inParens(
       identifier ~ tpe
     ).map {
       case (_, t) =>
@@ -265,8 +184,8 @@ object GoParser {
     }
 
     val funcDefHeader = ("func" ~ contextArg.? ~ identifier ~/
-      (GoTypes.namedArgs | GoTypes.positionallyNamedArgs) ~
-      GoTypes.funcResultArgs).map(NamedFuncDef.tupled)
+      (namedArgs | positionallyNamedArgs) ~
+      funcResultArgs).map(NamedFuncDef.tupled)
 
     funcDefHeader ~ block
   }
@@ -282,7 +201,7 @@ object GoParser {
 
   def contents = P {
     val charThings = Set('/', '(', ')', '{', '}', '"', '`')
-    (CharsWhile(c => ! (charThings contains c)) | shortstring | block | comment | parenExpr).map { _ => () }
+    (CharsWhile(c => ! (charThings contains c)) | string_lit | block | comment | parenExpr).map { _ => () }
   }
 
   def interfaceMember: Parser[Either[(String, FuncType), Nothing]] = {

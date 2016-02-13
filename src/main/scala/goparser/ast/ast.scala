@@ -30,7 +30,8 @@ case object BooleanType extends GoPrimitive
 case class FuncType(args: Seq[FuncArg], results: Seq[GoType]) extends GoPrimitive
 
 case class UnsupportedType(n: String) extends GoType
-case class SliceType(size: Option[Int], values: GoType) extends GoType
+case class SliceType(values: GoType) extends GoType
+case class ArrayType(values: GoType) extends GoType
 case class MapType(keyType: GoType, valueType: GoType) extends GoType
 case class PointerType(tpe: GoType) extends GoType
 
@@ -42,4 +43,6 @@ case class NamedFuncDef(
 
 case class FuncArg(
   name: String,
-  tpe: GoType)
+  tpe: GoType) extends Node
+
+case class VarBinding(name: String, t: Option[GoType]) extends Node

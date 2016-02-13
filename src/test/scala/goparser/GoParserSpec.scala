@@ -20,8 +20,44 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
   val tpe = doParse(GoTypes.tpe, _: String)
 
   import fastparse.all.Parsed
+  describe("var") {
+    it("parses a single variable without a type") {
+      doParse(GoParser.goVars, """var LosError = thing.Error""") shouldBe (
+        Seq(VarBinding("LosError", None)))
+    }
+
+    it("parses a single variable with a type") {
+      doParse(GoParser.goVars, """var LosNumero int64 = 24""") shouldBe (
+        Seq(VarBinding("LosNumero", Some(tpe("int64")))))
+    }
+
+    it("parses multiple global variables") {
+      doParse(GoParser.goVars, """
+        var (Error    = errors.NewClass("demo"))
+      """.trim) shouldBe (
+        Seq(
+          VarBinding("Error", None)//,
+          // VarBinding("NotFound", None),
+          // VarBinding("Unauthorized", None)
+        ))
+
+    }
+  }
+
+  describe("Expressions") {
+    it("parses a function call to a function in a package") {
+      doParse(GoParser.Expression, """errors.NewClass("demo")""") shouldBe (())
+    }
+
+    it("parses a var binding") {
+      doParse(GoParser.varBinding, """Error    = errors.NewClass("demo")""") shouldBe (
+        VarBinding("Error",None))
+    }
+
+  }
+
   describe("elements") {
-    it("parsers a package line") {
+    it("parses a package line") {
       doParse(GoParser.pkg, "package thing") shouldBe PackageDef("thing")
     }
 
@@ -63,9 +99,9 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
       // pointers
       tpe("*int") shouldBe (PointerType(IntegerType(None, true)))
       // slices
-      tpe("[]int") shouldBe (SliceType(None, IntegerType(None, true)))
-      tpe("[10]int") shouldBe (SliceType(Some(10), IntegerType(None, true)))
-      tpe("[10]*int") shouldBe (SliceType(Some(10), PointerType(IntegerType(None, true))))
+      tpe("[]int") shouldBe (SliceType(IntegerType(None, true)))
+      tpe("[10]int") shouldBe (ArrayType(IntegerType(None, true)))
+      tpe("[10]*int") shouldBe (ArrayType(PointerType(IntegerType(None, true))))
       tpe("map[string]int") shouldBe (MapType(StringType, IntegerType(None, true)))
       tpe("Message") shouldBe (ReferencedType(None, "Message"))
       tpe("protobuf.Message") shouldBe (ReferencedType(Some("protobuf"), "Message"))
@@ -100,14 +136,14 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
 
     it("parses a struct field") {
       doParse(GoTypes.structField, "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
-        StructField("Key", SliceType(None, ByteType), Some("""protobuf:"bytes,1,opt,name=key"""")))
+        StructField("Key", SliceType(ByteType), Some("""protobuf:"bytes,1,opt,name=key"""")))
 
       doParse(GoTypes.structFieldInclude, "IncludeThis\n") shouldBe (
         StructFieldInclude(tpe("IncludeThis"), None))
     }
 
     it("parse a struct") {
-      doParse(GoTypes.struct, """
+      doParse(GoParser.structDef, """
         type PrivateKey struct {
           Key       []byte    `protobuf:"bytes,1,opt,name=key" json:"key,omitempty"`
           PublicKey PublicKey `protobuf:"bytes,2,opt,name=public_key" json:"public_key"`
