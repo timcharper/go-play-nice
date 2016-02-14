@@ -5,6 +5,7 @@ import ast._
 
 class GoParserSpec extends FunSpec with Matchers with Inside {
 
+  import GoTypes.inParens
   // def testing[T](fn: parser.type => parser.Parser[T], s: String): T =
   //   parser.parseAll(fn(parser), s).get
 
@@ -33,12 +34,18 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
 
     it("parses multiple global variables") {
       doParse(GoParser.goVars, """
-        var (Error    = errors.NewClass("demo"))
+        var (
+          Error    = errors.NewClass("demo")
+          NotFound = Error.NewClass("not found",
+            errhttp.SetStatusCode(httplib.StatusNotFound))
+          Unauthorized = Error.NewClass("unauthorized",
+            errhttp.SetStatusCode(httplib.StatusUnauthorized))
+        )
       """.trim) shouldBe (
         Seq(
-          VarBinding("Error", None)//,
-          // VarBinding("NotFound", None),
-          // VarBinding("Unauthorized", None)
+          VarBinding("Error", None),
+          VarBinding("NotFound", None),
+          VarBinding("Unauthorized", None)
         ))
 
     }
@@ -48,6 +55,15 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
     it("parses a function call to a function in a package") {
       doParse(GoParser.Expression, """errors.NewClass("demo")""") shouldBe (())
     }
+
+    it("parses a function call that spans lines") {
+      doParse(inParens(GoParser.Expression), """
+        (Error.NewClass("not found",
+          errhttp.SetStatusCode(httplib.StatusNotFound)))
+      """.trim) shouldBe (())
+    }
+
+
 
     it("parses a var binding") {
       doParse(GoParser.varBinding, """Error    = errors.NewClass("demo")""") shouldBe (

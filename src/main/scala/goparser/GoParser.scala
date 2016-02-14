@@ -53,11 +53,11 @@ object GoParser {
   }.map(_ => ())
 
   val LiteralValue: Parser[Unit] = P {
-    "{" ~ lineDelimiter.rep ~ ElementList ~ ",".? ~ "}"
+    "{" ~ lineDelimiter.rep ~ ElementList ~ `,`.? ~ "}"
   }
 
   val ElementList: Parser[Unit] = P {
-    Element.rep(sep = ",")
+    Element.rep(sep = `,`)
   }
 
   val FunctionLit: Parser[Unit] = P {
@@ -97,7 +97,7 @@ object GoParser {
   }
 
   val Conversion: Parser[Unit] = P {
-    tpe ~ "(" ~ Expression ~ ",".? ~ ")"
+    tpe ~ "(" ~ Expression ~ `,`.? ~ ")"
   }.map ( _ => () )
 
   val PrimaryExpr: Parser[Unit] = P {
@@ -106,44 +106,38 @@ object GoParser {
 	  (Selector | Index | Slice | TypeAssertion | Arguments).rep
   }
 
-  val Selector: Parser[Unit] = P { ("." ~ identifier).map { _ => () } }
-  val Index: Parser[Unit] = P { "[" ~ lineDelimiter.rep ~ Expression ~ "]" }
+  val Selector: Parser[Unit] = P { (`.` ~ identifier).map { _ => () } }
+  val Index: Parser[Unit] = P { `[` ~ lineDelimiter.rep ~ Expression ~ "]" }
   val Slice: Parser[Unit] = P {
-    "[" ~ (
+    `[` ~ (
       ( Expression.? ~ ":" ~ Expression.? ) |
       ( Expression.? ~ ":" ~ Expression ~ ":" ~ Expression )) ~
     "]"
   }
 
-  val TypeAssertion: Parser[Unit] = P { "." ~ "(" ~ tpe ~ ")" }.map{ _ => () }
+  val TypeAssertion: Parser[Unit] = P { `.` ~ "(" ~ tpe ~ ")" }.map{ _ => () }
   val Arguments: Parser[Unit] = P {
-    "(" ~ ( (ExpressionList | (tpe ~ ( "," ~ ExpressionList ).?) ) ~ "...".? ~ ",".?).? ~ ")"
+    "(" ~ ( (ExpressionList | (tpe ~ ( `,` ~ ExpressionList ).?) ) ~ "...".? ~ `,`.?).? ~ ")"
   }.map { _ => () }
 
-  val statementDelim = lineDelimiter.rep(1) | ";"
   val ConstDecl: Parser[Unit] = P {
     "const" ~ ( ConstSpec | (
-      "(" ~ lineDelimiter.rep(1) ~ (ConstSpec.rep(sep = statementDelim)) ~ ")"
+      "(" ~ lineDelimiter.rep(1) ~ (ConstSpec.rep(sep = `;`)) ~ ")"
     ))
   }.map { _ => () }
 
   val ConstSpec      = P { IdentifierList ~ tpe.? ~ "=" ~ ExpressionList }
 
-  val IdentifierList: Parser[Unit] = identifier.rep(sep = ",").map { _ => () }
-  val ExpressionList: Parser[Unit] = Expression.rep(sep = ",")
-
-  val suchThing = {
-    (identifier ~ tpe.? ~ "=" ~ lineDelimiter.rep ~ Expression).map(VarBinding.tupled)
-  }
+  val IdentifierList: Parser[Unit] = identifier.rep(sep = `,`).map { _ => () }
+  val ExpressionList: Parser[Unit] = Expression.rep(sep = `,`)
 
   val varBinding = P {
     (identifier ~ tpe.? ~ "=" ~/ lineDelimiter.rep ~ Expression).map(VarBinding.tupled)
   }
 
   def goVars: Parser[Seq[VarBinding]] = P {
-    // "var" ~ inParens(varBinding.rep(min=1).map(_.toList))
     "var" ~/ lineDelimiter.rep ~ (
-      inParens(varBinding.rep(sep = lineDelimiter)) |
+      inParens(varBinding.rep(sep = `;`) ~ `;`.rep) |
         varBinding.map(Seq(_))
     )
   }

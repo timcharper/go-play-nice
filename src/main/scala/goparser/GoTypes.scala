@@ -129,7 +129,12 @@ object GoTypes {
     }
   }
 
-  def inParens[T](p: Parser[T]): Parser[T] = "(" ~ lineDelimiter.rep ~ p ~ ")"
+  val `[`: Parser[Unit] = P { "[" ~ lineDelimiter.rep }
+  val `(`: Parser[Unit] = P { "(" ~ lineDelimiter.rep }
+  val `,`: Parser[Unit] = P { "," ~ lineDelimiter.rep }
+  val `.`: Parser[Unit] = P { "." ~ lineDelimiter.rep }
+  val `;` = (";" ~ lineDelimiter.rep) | lineDelimiter.rep(1)
+  def inParens[T](p: Parser[T]): Parser[T] = `(` ~ p ~ ")"
 
   val funcResultArgs: Parser[Seq[GoType]] =
     tpe.rep(min = 0, max = 1) |
