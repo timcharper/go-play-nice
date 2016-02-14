@@ -3,24 +3,11 @@ package goparser
 import org.scalatest.{FunSpec, Matchers, Inside}
 import ast._
 
-class GoParserSpec extends FunSpec with Matchers with Inside {
+class GoParserSpec extends FunSpec with Matchers with Inside with ParseHelpers{
 
-  import GoTypes.inParens
   // def testing[T](fn: parser.type => parser.Parser[T], s: String): T =
   //   parser.parseAll(fn(parser), s).get
 
-  import fastparse.core._
-  def doParse[T](p: Parser[T], s: String): T = {
-    p.parse(s) match {
-      case Parsed.Success(m, _) =>
-        m
-      case f: Parsed.Failure =>
-        throw new ParseError(f)
-    }
-  }
-  val tpe = doParse(GoTypes.tpe, _: String)
-
-  import fastparse.all.Parsed
   describe("var") {
     it("parses a single variable without a type") {
       doParse(GoParser.goVars, """var LosError = thing.Error""") shouldBe (
@@ -47,34 +34,13 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
           VarBinding("NotFound", None),
           VarBinding("Unauthorized", None)
         ))
-
     }
   }
 
-  describe("Expressions") {
-    it("parses a function call to a function in a package") {
-      doParse(GoParser.Expression, """errors.NewClass("demo")""") shouldBe (())
-    }
-
-    it("parses a function call that spans lines") {
-      doParse(inParens(GoParser.Expression), """
-        (Error.NewClass("not found",
-          errhttp.SetStatusCode(httplib.StatusNotFound)))
-      """.trim) shouldBe (())
-    }
-
-
-
-    it("parses a var binding") {
-      doParse(GoParser.varBinding, """Error    = errors.NewClass("demo")""") shouldBe (
-        VarBinding("Error",None))
-    }
-
-  }
 
   describe("elements") {
     it("parses a package line") {
-      doParse(GoParser.pkg, "package thing") shouldBe PackageDef("thing")
+      doParse(GoParser.packageDef, "package thing") shouldBe PackageDef("thing")
     }
 
     it("parses a single input line without an alias") {
@@ -101,60 +67,21 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
           Import(None, "noalias")))
     }
 
-    it("parses types") {
-      // ints
-      tpe("byte") shouldBe (IntegerType(Some(8), false))
-      tpe("int") shouldBe (IntegerType(None, true))
-      tpe("uint32") shouldBe (IntegerType(Some(32), false))
-      tpe("uint64") shouldBe (IntegerType(Some(64), false))
-      tpe("float32") shouldBe (FloatType(32))
-      tpe("float64") shouldBe (FloatType(64))
-      tpe("complex64") shouldBe (ComplexType(64))
-      tpe("complex128") shouldBe (ComplexType(128))
-      tpe("boolean") shouldBe (BooleanType)
-      // pointers
-      tpe("*int") shouldBe (PointerType(IntegerType(None, true)))
-      // slices
-      tpe("[]int") shouldBe (SliceType(IntegerType(None, true)))
-      tpe("[10]int") shouldBe (ArrayType(IntegerType(None, true)))
-      tpe("[10]*int") shouldBe (ArrayType(PointerType(IntegerType(None, true))))
-      tpe("map[string]int") shouldBe (MapType(StringType, IntegerType(None, true)))
-      tpe("Message") shouldBe (ReferencedType(None, "Message"))
-      tpe("protobuf.Message") shouldBe (ReferencedType(Some("protobuf"), "Message"))
-      tpe("func()") shouldBe (FuncType(List.empty, List.empty))
-      tpe("func(int)") shouldBe (
-        FuncType(
-          List(
-            FuncArg("arg0", tpe("int"))),
-          List.empty))
 
-      tpe("func(int) bool") shouldBe (
-        FuncType(
-          List(
-            FuncArg("arg0", tpe("int"))),
-          List(
-            tpe("bool"))))
-
-      tpe("func(src, dst []byte)") shouldBe (
-        FuncType(
-          List(
-            FuncArg("src", tpe("[]byte")),
-            FuncArg("dst", tpe("[]byte"))),
-          List.empty))
-    }
 
     it("namedArgs") {
-      doParse(GoTypes.namedArgs, "(src, dst []byte)") shouldBe (
+      doParse(GoExpr.namedArgs, "(src, dst []byte)") shouldBe (
         List(
             FuncArg("src", tpe("[]byte")),
             FuncArg("dst", tpe("[]byte"))))
     }
 
     it("parses a struct field") {
-      doParse(GoTypes.structField, "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
+      import fastparse.all._
+      doParse(GoExpr.structField ~ "\n", "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
         StructField("Key", SliceType(ByteType), Some("""protobuf:"bytes,1,opt,name=key"""")))
 
-      doParse(GoTypes.structFieldInclude, "IncludeThis\n") shouldBe (
+      doParse(GoExpr.structFieldInclude ~ "\n", "IncludeThis\n") shouldBe (
         StructFieldInclude(tpe("IncludeThis"), None))
     }
 
@@ -175,7 +102,7 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
     }
 
     it("consumes a block of code") {
-      doParse(GoParser.block, """
+      doParse(GoExpr.block, """
         {
           in := reflect.ValueOf(src)
           out := reflect.ValueOf(dst)
@@ -199,13 +126,14 @@ class GoParserSpec extends FunSpec with Matchers with Inside {
       doParse(GoParser.namedFuncDef, """
         func Merge(dst, src Message) {}
       """.trim) shouldBe (
-        NamedFuncDef(
+        FuncDef(
           None,
           "Merge",
-          List(
-            FuncArg("dst", ReferencedType(None, "Message")),
-            FuncArg("src", ReferencedType(None, "Message"))),
-          List.empty)
+          FuncType(
+            List(
+              FuncArg("dst", ReferencedType(None, "Message")),
+              FuncArg("src", ReferencedType(None, "Message"))),
+            List.empty))
       )
     }
 

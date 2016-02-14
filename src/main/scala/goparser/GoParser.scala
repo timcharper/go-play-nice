@@ -5,64 +5,19 @@ import ast._
 import scala.annotation.tailrec
 // import Expressions._
 
-object Basic {
-  val Newline = P( StringIn("\r\n", "\n") )
-}
+// object Basic {
+// }
 
 
 object WsApi extends fastparse.WhitespaceApi.Wrapper(Lexical.wscomment)
 
-// object GoProgram {
-//   import Lexical.kw
-//   import WsApi._
-//   import Lexical._
-//   import GoTypes.tpe
-// }
-
 object GoParser {
   import WsApi._
   import Lexical._
-  import GoTypes._
+  import GoExpr._
 
-  def pkg: Parser[PackageDef] =
+  def packageDef: Parser[PackageDef] =
     P("package" ~ identifier).map(PackageDef)
-
-  val Operand: Parser[Unit] = P {
-    Literal | OperandName | MethodExpr | "(" ~ lineDelimiter.rep ~ Expression ~ ")"
-  }
-
-  val MethodExpr: Parser[Unit] = P {
-    (ReceiverType ~ "." ~ lineDelimiter.rep ~ MethodName)
-  }.map(_ => ())
-
-  val ReceiverType = identifier
-  val MethodName = identifier
-
-  val Literal: Parser[Unit] = P {
-    BasicLit.map(_ => ()) | CompositeLit | FunctionLit
-  }
-
-  val CompositeLit: Parser[Unit] = P { LiteralType ~ LiteralValue }
-  val LiteralType: Parser[Unit] = P {
-    structTpe | arrayTpe | ("[" ~ lineDelimiter.rep ~ "..." ~ "]" ~ tpe) |
-    sliceTpe | mapTpe | referencedTpe
-  }.map { _ => () }
-
-  val structTpe: Parser[Unit] = P {
-    "struct" ~ "{" ~ lineDelimiter.rep ~ (structItem ~ lineDelimiter.rep).rep ~ "}"
-  }.map(_ => ())
-
-  val LiteralValue: Parser[Unit] = P {
-    "{" ~ lineDelimiter.rep ~ ElementList ~ `,`.? ~ "}"
-  }
-
-  val ElementList: Parser[Unit] = P {
-    Element.rep(sep = `,`)
-  }
-
-  val FunctionLit: Parser[Unit] = P {
-    funcTpe ~ block
-  }.map(_ => ())
 
   def structDef: Parser[StructDef] = P {
     "type" ~ identifier ~ "struct" ~/ "{" ~ lineDelimiter.rep ~
@@ -71,65 +26,6 @@ object GoParser {
   }.map {
     case (name, fields) => StructDef(name, fields.toList)
   }
-
-  val Element: Parser[Unit] = P { ( Key ~ ":" ).? ~ Value }
-  val Key: Parser[Unit] = P {  FieldName | Expression | LiteralValue }
-  val FieldName: Parser[Unit] = P {  identifier }.map(_ => ())
-  val Value: Parser[Unit] = P {  Expression | LiteralValue }
-
-  val BasicLit: Parser[String] = P {
-    int_lit | float_lit | imaginary_lit | rune_lit | string_lit
-  }
-
-  val OperandName: Parser[Unit] = P {
-    (identifier | QualifiedIdent).map(_ => ())
-  }
-
-  val PackageName = P { identifier }
-  val QualifiedIdent = PackageName ~ "." ~ identifier
-
-  def Expression: Parser[Unit] = P {
-    UnaryExpr ~ (binary_op ~ Expression).rep
-  }
-
-  val UnaryExpr: Parser[Unit]  = P {
-    PrimaryExpr | (unary_op ~ UnaryExpr)
-  }
-
-  val Conversion: Parser[Unit] = P {
-    tpe ~ "(" ~ Expression ~ `,`.? ~ ")"
-  }.map ( _ => () )
-
-  val PrimaryExpr: Parser[Unit] = P {
-	  ( Operand |
-	    Conversion) ~
-	  (Selector | Index | Slice | TypeAssertion | Arguments).rep
-  }
-
-  val Selector: Parser[Unit] = P { (`.` ~ identifier).map { _ => () } }
-  val Index: Parser[Unit] = P { `[` ~ lineDelimiter.rep ~ Expression ~ "]" }
-  val Slice: Parser[Unit] = P {
-    `[` ~ (
-      ( Expression.? ~ ":" ~ Expression.? ) |
-      ( Expression.? ~ ":" ~ Expression ~ ":" ~ Expression )) ~
-    "]"
-  }
-
-  val TypeAssertion: Parser[Unit] = P { `.` ~ "(" ~ tpe ~ ")" }.map{ _ => () }
-  val Arguments: Parser[Unit] = P {
-    "(" ~ ( (ExpressionList | (tpe ~ ( `,` ~ ExpressionList ).?) ) ~ "...".? ~ `,`.?).? ~ ")"
-  }.map { _ => () }
-
-  val ConstDecl: Parser[Unit] = P {
-    "const" ~ ( ConstSpec | (
-      "(" ~ lineDelimiter.rep(1) ~ (ConstSpec.rep(sep = `;`)) ~ ")"
-    ))
-  }.map { _ => () }
-
-  val ConstSpec      = P { IdentifierList ~ tpe.? ~ "=" ~ ExpressionList }
-
-  val IdentifierList: Parser[Unit] = identifier.rep(sep = `,`).map { _ => () }
-  val ExpressionList: Parser[Unit] = Expression.rep(sep = `,`)
 
   val varBinding = P {
     (identifier ~ tpe.? ~ "=" ~/ lineDelimiter.rep ~ Expression).map(VarBinding.tupled)
@@ -155,14 +51,11 @@ object GoParser {
     ")"
   }
 
-  def spaceDelim = (inlineComment | " " | "\t").rep(1)
-
-
   def importSingle: Parser[Seq[Import]] =
     ("import" ~ importPair).map(List(_))
 
 
-  def namedFuncDef: Parser[NamedFuncDef] = P {
+  def namedFuncDef: Parser[FuncDef] = P {
     val contextArg: Parser[GoType] = inParens(
       identifier ~ tpe
     ).map {
@@ -178,35 +71,22 @@ object GoParser {
     }
 
     val funcDefHeader = ("func" ~ contextArg.? ~ identifier ~/
-      (namedArgs | positionallyNamedArgs) ~
-      funcResultArgs).map(NamedFuncDef.tupled)
+      ( (namedArgs | positionallyNamedArgs) ~
+        funcResultArgs).map(FuncType.tupled)
+    ).map(FuncDef.tupled)
 
     funcDefHeader ~ block
   }
 
-
-  def parenExpr: Parser[Unit] = P {
-    "(" ~ contents.rep ~ ")"
-  }
-
-  def block: Parser[Unit] = P {
-    "{" ~ contents.rep ~ "}"
-  }
-
-  def contents = P {
-    val charThings = Set('/', '(', ')', '{', '}', '"', '`')
-    (CharsWhile(c => ! (charThings contains c)) | string_lit | block | comment | parenExpr).map { _ => () }
-  }
+  def interfaceInclude: Parser[Either[Nothing, ReferencedType]] =
+    GoExpr.referencedTpe.map(Right(_))
 
   def interfaceMember: Parser[Either[(String, FuncType), Nothing]] = {
-    (identifier ~ GoTypes.funcTypeArgs ~ GoTypes.funcResultArgs).map {
+    (identifier ~ GoExpr.funcTypeArgs ~ GoExpr.funcResultArgs).map {
       case (name, args, resultArgs) =>
         Left((name, FuncType(args, resultArgs)))
     }
   }
-
-  def interfaceInclude: Parser[Either[Nothing, ReferencedType]] =
-    GoTypes.referencedTpe.map(Right(_))
 
   def interfaceItem: Parser[Either[(String, FuncType), ReferencedType]] = P {
     interfaceMember | interfaceInclude
@@ -222,5 +102,4 @@ object GoParser {
       val includes = fields.collect { case Right(i) => i }.toList
       InterfaceDef(name, members, includes)
   }
-
 }

@@ -1,9 +1,11 @@
 package goparser
+import ast._
 
 import scala.annotation.tailrec
 
 object Lexical {
   import fastparse.all._
+  val Newline = P( StringIn("\r\n", "\n") )
   val space = CharIn(Seq(' ', '\t')).rep(1)
   val letter     = P( lowercase | uppercase )
   val lowercase  = P( CharIn('a' to 'z') )
@@ -57,17 +59,51 @@ object Lexical {
 
   val inlineCommentChunk = P( CharsWhile(!"/*".contains(_)) | !"*/" ~ AnyChar )
   val inlineComment: P0 = P( "/*" ~ inlineCommentChunk.rep ~ "*/")
-  val sameLineCharChunks = P( CharsWhile(!"\n\r".contains(_))  | !Basic.Newline ~ AnyChar )
-  val lineComment = P( "//" ~ sameLineCharChunks.rep ~ &(Basic.Newline | End) )
+  val sameLineCharChunks = P( CharsWhile(!"\n\r".contains(_))  | !Newline ~ AnyChar )
+  val lineComment = P( "//" ~ sameLineCharChunks.rep ~ &(Newline | End) )
   val comment: P0 = P( multilineComment | lineComment )
 
-  val wscomment: Parser[Unit] = P { (space | lineComment | inlineComment).rep }
-  val lineDelimiter : Parser[Unit] = P { (Basic.Newline | multilineComment).rep(1) }
-
+  val wscomment: P0 = P { (space | lineComment | inlineComment).rep }
+  val lineDelimiter : P0 = P { (Newline | multilineComment).rep(1) }
 
   val escapeseq: P0 = P( "\\" ~ AnyChar )
   def string_lit = shortstring0("\"") | shortstring0("`")
   def shortstring0(delimiter: String) = P( delimiter ~ shortstringitem(delimiter).rep.! ~ delimiter)
   def shortstringitem(quote: String): P0 = P( shortstringchar(quote) | escapeseq )
   def shortstringchar(quote: String): P0 = P( CharsWhile(!s"\\\n${quote(0)}".contains(_)) )
+
+  def complexTpe: Parser[ComplexType] = P {
+    ("complex" ~ ("64" | "128").!).map { bits =>
+      ComplexType(bits.toInt)
+    }
+  }
+  def floatTpe: Parser[FloatType] = P {
+    ("float" ~ ("32" | "64").!).map { bits =>
+      FloatType(bits.toInt)
+    }
+  }
+
+  def byteTpe: Parser[IntegerType] = P {
+    "byte".!.map { _ =>
+      IntegerType(Some(8), false)
+    }
+  }
+
+  def integerTpe: Parser[IntegerType] = byteTpe | P {
+    ("u".!.? ~ "int" ~ ("8" | "16" | "32" | "64").!.?) map {
+      case (unsigned, bits) =>
+        IntegerType(bits.map(_.toInt), unsigned.isEmpty)
+    }
+  }
+
+  def boolTpe: Parser[BooleanType.type] = P {
+    "boolean".!.map { _ =>
+      BooleanType
+    }
+  }
+
+  def stringTpe: Parser[StringType.type] = P {
+    "string".!.map { _ => StringType }
+  }
+
 }
