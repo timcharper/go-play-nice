@@ -19,12 +19,76 @@ class GoExprSpec extends FunSpec with Matchers with ParseHelpers {
     }
 
     it("parses a var binding") {
-      doParse(GoParser.varBinding, """Error    = errors.NewClass("demo")""") shouldBe (
-        VarBinding("Error",None))
+      doParse(GoParser.varDef, """var Error    = errors.NewClass("demo")""") shouldBe (
+        Seq(VarBinding("Error",None)))
     }
   }
 
+  it("namedArgs") {
+    doParse(GoExpr.namedArgs, "(src, dst []byte)") shouldBe (
+      List(
+        FuncArg("src", tpe("[]byte")),
+        FuncArg("dst", tpe("[]byte"))))
+  }
+
+  it("parses a struct field") {
+    import fastparse.all._
+    doParse(GoExpr.structField ~ "\n", "Key       []byte    `protobuf:\"bytes,1,opt,name=key\"`\n") shouldBe (
+      StructField("Key", SliceType(ByteType), Some("""protobuf:"bytes,1,opt,name=key"""")))
+
+    doParse(GoExpr.structInclude ~ "\n", "IncludeThis\n") shouldBe (
+      StructInclude(tpe("IncludeThis"), None))
+  }
+
   describe("type parser") {
+    describe("parsing interfaces") {
+      it("parses an member item") {
+
+        doParse(GoExpr.interfaceItem, """
+          BlockSize() int
+        """.trim) shouldBe (
+          Left(("BlockSize", FuncType(List.empty, List(tpe("int")))))
+        )
+
+        doParse(GoExpr.interfaceMember, """
+          Encrypt(src, dst []byte)
+        """.trim) shouldBe (
+          Left(
+            ("Encrypt",
+              FuncType(
+                List(
+                  FuncArg("src", tpe("[]byte")),
+                  FuncArg("dst", tpe("[]byte"))),
+                List.empty))))
+      }
+
+    }
+    it("parses an interface with includes") {
+      // TODO - actually include interface pkg.IncludedInterface
+
+      doParse(GoExpr.tpe, """
+          interface {
+            BlockSize() int
+            Encrypt(src, dst []byte)
+            Decrypt(src, dst []byte)
+          }
+        """.trim) shouldBe (
+        InterfaceType(
+          members = Map(
+            "BlockSize" -> FuncType(List.empty, List(tpe("int"))),
+            "Encrypt" -> FuncType(
+              List(
+                FuncArg("src", tpe("[]byte")),
+                FuncArg("dst", tpe("[]byte"))),
+              List.empty),
+            "Decrypt" -> FuncType(
+              List(
+                FuncArg("src", tpe("[]byte")),
+                FuncArg("dst", tpe("[]byte"))),
+              List.empty)),
+          includes = List.empty))
+    }
+
     // ints
     for ((tpeStr, parsedNode: GoType) <- List(
       "byte" -> IntegerType(Some(8), false),
@@ -45,6 +109,14 @@ class GoExprSpec extends FunSpec with Matchers with ParseHelpers {
       "map[string]int" -> MapType(StringType, IntegerType(None, true)),
       "Message" -> ReferencedType(None, "Message"),
       "protobuf.Message" -> ReferencedType(Some("protobuf"), "Message"),
+      "interface{}" -> InterfaceType(Map.empty, List.empty),
+
+      "interface{A(); B(int)}" ->
+        InterfaceType(
+          Map(
+            "A" -> FuncType(Seq(), Seq()),
+            "B" -> FuncType(Seq(FuncArg("arg0", tpe("int"))), Seq())), Seq()),
+
       "func()" -> FuncType(List.empty, List.empty),
       "func(int)" ->
         FuncType(

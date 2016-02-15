@@ -7,12 +7,12 @@ object Lexical {
   import fastparse.all._
   val Newline = P( StringIn("\r\n", "\n") )
   val space = CharIn(Seq(' ', '\t')).rep(1)
-  val letter     = P( lowercase | uppercase )
+  val letter     = P( lowercase | uppercase | "_" )
   val lowercase  = P( CharIn('a' to 'z') )
   val uppercase  = P( CharIn('A' to 'Z') )
   val decimal_digit      = P( CharIn('0' to '9') )
   val exponent = (CharIn(Seq('e', 'E')) ~ CharIn(Seq('-', '+')).? ~ decimal_digit.rep)
-  val decimal_lit = CharIn('1' to '9') ~ decimal_digit.rep
+  val decimal_lit = decimal_digit.rep(1)
   val decimals = decimal_digit ~ decimal_digit.rep
   // val float_lit = digit.rep ~ "." ~ digit.rep
   val float_lit = P {
@@ -36,7 +36,7 @@ object Lexical {
   val unary_op   = StringIn("+", "-", "!", "^", "*", "&", "<-")
 
   val word: P[String] =
-    P( (letter|"_") ~ (letter | decimal_digit | "_").rep ).!
+    P( (letter) ~ (letter | decimal_digit).rep ).!
 
   val unicode = P { CharsWhile(_.toInt > 255) }
   val identifier: P[String] = P {
@@ -104,6 +104,10 @@ object Lexical {
 
   def stringTpe: Parser[StringType.type] = P {
     "string".!.map { _ => StringType }
+  }
+
+  def errorTpe: Parser[ErrorType.type] = P {
+    "error".!.map { _ => ErrorType }
   }
 
 }

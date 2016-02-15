@@ -4,24 +4,74 @@ import fastparse.noApi._
 import ast._
 import scala.annotation.tailrec
 
+object Helpers {
+  import scala.language.higherKinds
+  import scala.collection.generic.CanBuildFrom
+
+  def splitEither[L, R, X, C[X] <: TraversableOnce[X], OL, OR](
+    seq: C[Either[L, R]])(
+    implicit leftBuilder: CanBuildFrom[C[_], L, OL], 
+    rightBuilder: CanBuildFrom[C[_], R, OR]): (OL, OR) = {
+
+    val lb = leftBuilder.apply
+    val rb = rightBuilder.apply
+    List.empty.foreach(println)
+
+    seq.foreach {
+      case Left(l) => lb += l
+      case Right(r) => rb += r
+    }
+
+    (lb.result, rb.result)
+  }
+}
+
 object GoExpr {
   import WsApi._
   import Lexical._
 
+  val `{`: Parser[Unit] = P { "{" ~ lineDelimiter.rep }
+  val `}`: Parser[Unit] = P { "}" }
   val `[`: Parser[Unit] = P { "[" ~ lineDelimiter.rep }
   val `]`: Parser[Unit] = P { "]" }
   val `(`: Parser[Unit] = P { "(" ~ lineDelimiter.rep }
   val `)`: Parser[Unit] = P { ")" }
   val `,`: Parser[Unit] = P { "," ~ lineDelimiter.rep }
+  val `,|n`: Parser[Unit] = P { ("," ~ lineDelimiter.rep) | lineDelimiter.rep(1) }
   val `.`: Parser[Unit] = P { "." ~ lineDelimiter.rep }
   val `;` = (";" ~ lineDelimiter.rep) | lineDelimiter.rep(1)
 
-  val structTpe: P0 = P {
-    "struct" ~ "{" ~ lineDelimiter.rep ~ (structItem ~ lineDelimiter.rep).rep ~ "}"
-  }.map(_ => ())
+  val structTpe: Parser[StructType] = P {
+    "struct" ~ `{` ~ (structItem ~ `,|n`).rep ~ `}`
+  }.map(StructType(_))
+
+  val interfaceInclude: Parser[Either[Nothing, ReferencedType]] = P {
+    GoExpr.referencedTpe.map(Right(_))
+  }
+
+  val interfaceMember: Parser[Either[(String, FuncType), Nothing]] = P {
+    (identifier ~ GoExpr.funcTypeArgs ~ GoExpr.funcResultArgs).map {
+      case (name, args, resultArgs) =>
+        Left((name, FuncType(args, resultArgs)))
+    }
+  }
+
+  val interfaceItem: Parser[Either[(String, FuncType), ReferencedType]] = P {
+    interfaceMember | interfaceInclude
+  }
+
+  val interfaceTpe: Parser[InterfaceType] = P {
+    "interface" ~ `{` ~ lineDelimiter.rep ~
+      (interfaceItem).rep(sep = `;`) ~ lineDelimiter.? ~
+    `}`
+  }.map {
+    case (fields) =>
+      val (members, includes) = Helpers.splitEither(fields)
+      InterfaceType(members.toMap, includes.toList)
+  }
 
   val LiteralValue: P0 = P {
-    "{" ~ lineDelimiter.rep ~ ElementList ~ `,`.? ~ "}"
+    "{" ~ lineDelimiter.rep ~ ElementList ~ `,|n`.? ~ "}"
   }
 
   val ElementList: P0 = P {
@@ -140,26 +190,31 @@ object GoExpr {
     ((identifier ~ ".").? ~ identifier).map(ReferencedType.tupled)
   }
 
-
   def tpe: Parser[GoType] = P {
-    maybePointer(sliceTpe | arrayTpe | mapTpe | primitiveTpe | referencedTpe)
+    maybePointer(
+      structTpe |
+        interfaceTpe |
+        mapTpe |
+        sliceTpe |
+        arrayTpe |
+        primitiveTpe |
+        referencedTpe)
   }
-
 
   // TODO - move these below
   def structField: Parser[StructField] = P {
-    identifier ~ tpe ~ string_lit.? ~ &(lineDelimiter | "}")
+    identifier ~ tpe ~ string_lit.? ~ &(`,|n` | "}")
   }.map(StructField.tupled)
 
   def structItem: Parser[StructItem] =
-    structField | structFieldInclude
+    structField | structInclude
 
   def primitiveTpe =
-    integerTpe | floatTpe | complexTpe | boolTpe | stringTpe | funcTpe
+    integerTpe | floatTpe | complexTpe | boolTpe | errorTpe | stringTpe | funcTpe
 
-  def structFieldInclude: Parser[StructFieldInclude] = P {
+  def structInclude: Parser[StructInclude] = P {
     tpe ~ string_lit.? ~ &("\n" | "}")
-  }.map(StructFieldInclude.tupled)
+  }.map(StructInclude.tupled)
 
   /* first item is a name, type is optional except for in last position; consume
    * parens. ie (a, b int) */
@@ -201,9 +256,9 @@ object GoExpr {
   }
 
   val funcResultArgs: Parser[Seq[GoType]] =
-    tpe.rep(min = 0, max = 1) |
-      namedArgs.map(_.map(_.tpe)) |
-      unnamedArgs
+    namedArgs.map(_.map(_.tpe)) |
+      unnamedArgs |
+      tpe.rep(min = 0, max = 1)
 
   // Go, for reasons, allows you to declare a func with parameters that have no name
   val positionallyNamedArgs =
