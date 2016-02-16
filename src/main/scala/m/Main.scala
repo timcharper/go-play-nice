@@ -23,38 +23,9 @@ object Main extends App {
   println(scopedFn.tpe)
   println("===================")
 
-
-  @tailrec
-  def allDependencies(scopedTypes: List[ScopedType.Gen], visited: List[ScopedType.Gen] = List.empty): List[ScopedType.Gen] = scopedTypes match {
-    case Nil =>
-      visited
-    case head :: rest if visited contains head =>
-      allDependencies(rest, visited)
-    case head :: rest =>
-      allDependencies(head.typeDependencies ++ scopedTypes, head :: visited)
-  }
-
-  val suffixes = (Stream("") ++ Stream.from(1).map(_.toString))
-  @tailrec
-  def withNames(remaining: List[ScopedType.Gen],
-    primaryPath: File, // Note - canonicalize!!!
-    usedNames: Set[String] = Set.empty, // TODO - seed with reserved words!!!
-    names: Map[ScopedType.Gen, String] = Map.empty): Map[ScopedType.Gen, String] = remaining match {
-    case Nil =>
-      names
-    case head :: rest =>
-      val pickedName = if (head.scope.pkg.path == primaryPath)
-        head.name
-      else
-        head.scope.pkg.name + "__" + head.name
-
-      val suffix = suffixes.find { s => !(usedNames contains (pickedName + s)) }.get
-      val suffixedName = pickedName + suffix
-      withNames(rest, primaryPath, usedNames + suffixedName, names.updated(head, suffixedName))
-  }
-
-  val ents = allDependencies(List(scopedFn))
-  val named = withNames(ents, scopedFn.scope.pkg.path)
+  val ents = u.allDependencies(List(scopedFn))
+  val destPkg = u.pkg("hancockc")
+  val named = destPkg.withNames(ents)
   named.foreach {
     case (scopedVal @ ScopedType(_, _, f: StructType), name) =>
       println()

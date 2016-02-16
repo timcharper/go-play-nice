@@ -39,19 +39,6 @@ case class Scope(pkg: GoPackage, goFile: GoFile) {
     }
   }
 
-  // protected def typeDependenciesIter(tpe: GoType, deps: List[ScopedType.Gen] = List.empty): List[ScopedType.Gen] = tpe match {
-  //   case StructType(fields) =>
-  //     def iter(fields: List[StructItem], deps: List[ScopedType.Gen]): List[ScopedType.Gen] = {
-  //     }
-
-  //     fields.collect {
-  //       case StructField(_, fieldTpe: ReferencedType, _) =>
-
-  //         scope.resolveType(fieldTpe)
-  //     }
-  //   }
-  // }
-
   def isPrivate(n: String) = {
     n.head.toLower == n.head
   }
@@ -111,11 +98,24 @@ case class GoPackage(universe: ParseUniverse, path: File, members: Seq[GoFile]) 
       find(_.typeDefs.contains(name)).
       map { goFile => ScopedType(Scope(this, goFile), name, goFile.typeDefs(name)) }
   }
+
+  private def suffixes(pkgName: String) = (Stream("", pkgName.capitalize) ++ Stream.from(1).map(_.toString))
+  @tailrec
+  final def withNames(remaining: List[ScopedType.Gen],
+    usedNames: Set[String] = Set.empty, // TODO - seed with reserved words!!!
+    names: Map[ScopedType.Gen, String] = Map.empty): Map[ScopedType.Gen, String] = remaining match {
+    case Nil =>
+      names
+    case head :: rest =>
+      val suffix = suffixes(head.scope.pkg.name).find { s => !(usedNames contains (head.name + s)) }.get
+      val suffixedName = head.name + suffix
+      withNames(rest, usedNames + suffixedName, names.updated(head, suffixedName))
+  }
 }
 
 case class ParseUniverse(goPath: File) {
   private val pkgCache = SimpleCache[File, GoPackage] { cf =>
-    val members = cf.listFiles.filter { f =>
+    val members = Option(cf.listFiles).getOrElse(Array()).filter { f =>
       val filename = f.getName.toLowerCase
       filename.endsWith(".go") && ! filename.endsWith("_test.go")
     }.map { f =>
@@ -136,4 +136,15 @@ case class ParseUniverse(goPath: File) {
 
   def pkg(s: String): GoPackage =
     pkg(new File(goPath, s))
+
+  @tailrec
+  final def allDependencies(scopedTypes: List[ScopedType.Gen], visited: List[ScopedType.Gen] = List.empty): List[ScopedType.Gen] = scopedTypes match {
+    case Nil =>
+      visited
+    case head :: rest if visited contains head =>
+      allDependencies(rest, visited)
+    case head :: rest =>
+      allDependencies(head.typeDependencies ++ scopedTypes, head :: visited)
+  }
+
 }
