@@ -62,7 +62,8 @@ case class Scope(pkg: GoPackage, goFile: GoFile) {
         case StructField(_, fieldTpe, _) =>
           typeDependencies(fieldTpe)
         case t: StructInclude =>
-          ???
+          println(s"Warning! ignoring structInclude in ${tpe}")
+          List.empty
       }.flatten.toList
     case SliceType(valuesTpe) =>
       typeDependencies(valuesTpe)
@@ -99,6 +100,23 @@ case class GoPackage(universe: ParseUniverse, path: File, members: Seq[GoFile]) 
       map { goFile => ScopedType(Scope(this, goFile), name, goFile.typeDefs(name)) }
   }
 
+  val suffixes = Stream("") ++ Stream.from(1).map(_.toString)
+  final def generateImports(ents: List[ScopedType.Gen]): Map[File, Option[String]] = {
+    val (m, _) = ents.map(_.scope.pkg.path).
+      distinct.
+      filter(_ != path).
+      foldLeft(
+        ( Map(path -> (None: Option[String])),
+          Set.empty[String])) {
+        case ((map, set), f) =>
+          val pkgName = f.getName
+          val suffix = suffixes.find { s => ! set.contains(pkgName + s) }.get
+
+          (map.updated(f, Some(pkgName + suffix)), set + (pkgName + suffix))
+    }
+    m
+  }
+
   private def suffixes(pkgName: String) = (Stream("", pkgName.capitalize) ++ Stream.from(1).map(_.toString))
   @tailrec
   final def withNames(remaining: List[ScopedType.Gen],
@@ -114,6 +132,7 @@ case class GoPackage(universe: ParseUniverse, path: File, members: Seq[GoFile]) 
 }
 
 case class ParseUniverse(goPath: File) {
+  val goSrcPath = new File(goPath, "src")
   private val pkgCache = SimpleCache[File, GoPackage] { cf =>
     val members = Option(cf.listFiles).getOrElse(Array()).filter { f =>
       val filename = f.getName.toLowerCase
@@ -135,7 +154,7 @@ case class ParseUniverse(goPath: File) {
     pkgCache(f.getCanonicalFile)
 
   def pkg(s: String): GoPackage =
-    pkg(new File(goPath, s))
+    pkg(new File(goSrcPath, s))
 
   @tailrec
   final def allDependencies(scopedTypes: List[ScopedType.Gen], visited: List[ScopedType.Gen] = List.empty): List[ScopedType.Gen] = scopedTypes match {

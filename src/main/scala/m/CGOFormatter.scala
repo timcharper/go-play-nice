@@ -3,35 +3,37 @@ package m
 import goparser._
 import ast._
 import FormatHelpers.{indent,indentText}
+import java.io.File
 
 object CGOFormatter {
 
-    def renderType(t: GoType): String = t match {
-      case r: ReferencedType =>
-        // TODO - handle foreign package
-        r.pkg.map(p => p + "." + r.name) getOrElse r.name
-      case SliceType(v) =>
-        s"[]${renderType(v)}"
-      case PointerType(contained) =>
-        s"*${renderType(contained)}"
-      case MapType(keys, values) =>
-        s"map[${renderType(keys)}]${renderType(values)}"
-      case IntegerType(bits, signed) =>
-        (if (signed) "" else "u") + "int" + bits.map(_.toString).getOrElse("")
-      case BooleanType =>
-        "boolean"
-      case FloatType(bits) =>
-        s"float${bits}"
-      case ComplexType(bits) =>
-        s"complex${bits}"
+  def renderType(t: GoType, scope: Scope, imports: Map[File, Option[String]]): String = t match {
+    case r: ReferencedType =>
+      // TODO - handle foreign package
+      val referenced = scope.resolveTypeOnce(r)
+      val pkgAlias = imports(referenced.scope.pkg.path)
+      pkgAlias.map(p => p + "." + r.name) getOrElse r.name
+    case SliceType(v) =>
+      s"[]${renderType(v, scope, imports)}"
+    case PointerType(contained) =>
+      s"*${renderType(contained, scope, imports)}"
+    case MapType(keys, values) =>
+      s"map[${renderType(keys, scope, imports)}]${renderType(values, scope, imports)}"
+    case IntegerType(bits, signed) =>
+      (if (signed) "" else "u") + "int" + bits.map(_.toString).getOrElse("")
+    case BooleanType =>
+      "boolean"
+    case FloatType(bits) =>
+      s"float${bits}"
+    case ComplexType(bits) =>
+      s"complex${bits}"
+  }
 
-    }
 
-
-  def cgoTpeName(s: GoType, scope: Scope, naming: Map[ScopedType.Gen, String]): String =
+  def cgoTpeName(s: GoType, scope: Scope, naming: Map[ScopedType.Gen, String], imports: Map[File, Option[String]]): String =
     s match {
       case PointerType(contained) =>
-        s"*C.${renderType(contained)}"
+        "*" + cgoTpeName(contained, scope, naming, imports)
       case IntegerType(Some(8), signed) =>
         "C." + (if (signed) "" else "u") + "char"
       case IntegerType(Some(16), signed) =>
@@ -43,7 +45,7 @@ object CGOFormatter {
       case r: ReferencedType =>
         val resolved = scope.resolveType(r)
         naming.get(resolved).map { r => "C." + r }.getOrElse {
-          cgoTpeName(resolved.tpe, scope, naming)
+          cgoTpeName(resolved.tpe, scope, naming, imports)
         }
       case BooleanType =>
         "C.uchar"
@@ -56,14 +58,13 @@ object CGOFormatter {
         s"C.unsupported(${unsupported}) // LOL"
     }
 
-  case class FromCFormatter(struct: ScopedType[StructType], naming: Map[ScopedType.Gen, String]) {
-
+  case class CToGoFormatter(struct: ScopedType[StructType], naming: Map[ScopedType.Gen, String], imports: Map[File, Option[String]]) {
     def cTpeReader(cReadExpr: String, t: GoType): (Option[String], String) = t match {
       case r: ReferencedType =>
-          val resolved = struct.scope.resolveType(r)
-          naming.get(resolved).map { r => (None, s"cToGo_${r}(${cReadExpr})") }.getOrElse {
-            (None, s"${renderType(r)}(${cReadExpr})")
-          }
+        val resolved = struct.scope.resolveType(r)
+        naming.get(resolved).map { r => (None, s"cToGo_${r}(${cReadExpr})") }.getOrElse {
+          (None, s"${renderType(r, struct.scope, imports)}(${cReadExpr})")
+        }
 
       case StringType =>
         (None, s"C.GoString(${cReadExpr})")
@@ -77,12 +78,12 @@ object CGOFormatter {
           s"&${ptrValue}" )
 
       case IntegerType(_, _) =>
-        (None, s"${renderType(t)}(${cReadExpr})")
+        (None, s"${renderType(t, struct.scope, imports)}(${cReadExpr})")
       case SliceType(valuesTpe) =>
         val lenVar = newVarName("len")
         val cgoCastedSliceName = newVarName("cgoSlice")
         val castedSliceName = newVarName("slice")
-        val cgoSliceTypeName = cgoTpeName(valuesTpe, struct.scope, naming)
+        val cgoSliceTypeName = cgoTpeName(valuesTpe, struct.scope, naming, imports)
         val idxVar = newVarName("idx")
         val cgoItemVar = newVarName("cgoItem")
         val (castPreamble, castReadExpr) = cTpeReader(cgoItemVar, valuesTpe)
@@ -91,7 +92,7 @@ object CGOFormatter {
             s"""
             |${lenVar} := int(${cReadExpr}Len)
             |${cgoCastedSliceName} := (*[1 << 30]${cgoSliceTypeName})(unsafe.Pointer(${cReadExpr}))[:${lenVar}:${lenVar}]
-            |${castedSliceName} := make([]${renderType(valuesTpe)}, ${lenVar})
+            |${castedSliceName} := make([]${renderType(valuesTpe, struct.scope, imports)}, ${lenVar})
             |for ${idxVar}, ${cgoItemVar} := range ${cgoCastedSliceName} {
             |  ${castPreamble.getOrElse("")}
             |  ${castedSliceName}[${idxVar}] = ${castReadExpr}
@@ -122,12 +123,20 @@ object CGOFormatter {
 
     lazy val name = naming(struct)
 
+    def namespacedReference(s: ScopedType.Gen): String = {
+      imports(s.scope.pkg.path).map { alias =>
+        s"${alias}.${s.name}"
+      } getOrElse { s.name }
+    }
+
+
     override def toString = {
       val (preambleItems, fieldSeqExprs) = struct.tpe.fields.collect {
         case f: StructField =>
-          structFieldReader("struct", f.name, f.tpe)
-        case _ =>
-          ???
+          structFieldReader("cstruct", f.name, f.tpe)
+        // case i: StructInclude =>
+        //   println(s"Ignoring StructInclude ${i}")
+        //   (None, "")
       }.unzip
 
       val preamble = preambleItems.flatten.mkString("\n")
@@ -138,19 +147,19 @@ object CGOFormatter {
 
       // TODO - need to add namespace / import for struct.name if rendering into foreign namespace
       val goStructExpr = s"""
-      |${struct.name} {
+      |${namespacedReference(struct)} {
       |${fieldsExpr.map(indent(2)).mkString(",\n")} }
       """.stripMargin.trim
 
       s"""
-      |func cToGo_${name}(struct C.${name}) ${struct.name} {
+      |func cToGo_${name}(cstruct C.${name}) ${namespacedReference(struct)} {
       |${indentText(preamble, 2)}
       |  return ${indentText(goStructExpr, 2, false)}
       |}
       """.stripMargin
     }
   }
-  
+
   case class StructFormatter(struct: ScopedType[StructType], naming: Map[ScopedType.Gen, String]) {
     private def signedKw(signed: Boolean) =
       (if (signed) "signed" else "unsigned")
@@ -238,7 +247,7 @@ object CGOFormatter {
 
     override def toString = {
       (List(s"typedef struct ${name} {") :+
-        struct.tpe.fields.flatMap(formatField).map(indent(2)).mkString(",\n") :+
+        struct.tpe.fields.flatMap(formatField).map(indent(2)).mkString(";\n") :+
         s"} ${name};").mkString("\n")
     }
 
